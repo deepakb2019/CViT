@@ -1,0 +1,15 @@
+# Python-related ignores
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.swp
+*.egg-info/
+*.egg
+*.log
+
+# Virtual environment
+venv/
+env
+
+qdrant_storage/
