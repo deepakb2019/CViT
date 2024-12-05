@@ -286,7 +286,7 @@ def predict(
     count += 1
     print(f"\n\n{str(count)} Loading... {vid}")
 
-    df = df_face(vid, num_frames)  # Extract face from the frames
+    df = df_face(vid, num_frames)
 
     print("df- length",len(df))
 
@@ -316,40 +316,6 @@ def predict(
 
     return result, accuracy, count, [y, y_val]
 
-
-
-# def gen_parser():
-#     parser = argparse.ArgumentParser("CViT prediction")
-#     parser.add_argument("--p", type=str, help="video or image path")
-#     parser.add_argument(
-#         "--f", type=int, help="number of frames to process for prediction"
-#     )
-#     parser.add_argument(
-#         "--d", type=str, help="dataset type, dfdc, faceforensics, timit, celeb"
-#     )
-
-#     parser.add_argument(
-#         "--w", help="weight for cvit or for cvit2.",
-#     )
-#     parser.add_argument("--n", type=str, help="network cvit or cvit2")
-#     parser.add_argument("--fp16", type=str, help="half precision support")
-
-#     args = parser.parse_args()
-#     path = args.p if args.p else 'sample_prediction_data'
-#     num_frames = args.f if args.f else 15
-#     dataset = args.d if args.d else "other"
-#     net = args.n if args.n in ["cvit", "cvit2"] else "cvit2"
-#     fp16 = True if args.fp16 else False
-
-#     if args.w and net in ['cvit','cvit2']:
-#         cvit_weight = args.w
-#     else:
-#         cvit_weight = 'cvit_deepfake_detection_ep_50'
-    
-#     print(f'\nUsing Model: {net}, \nWeight: {cvit_weight}')
-
-#     cvit_weight +='.pth'
-#     return path, dataset, num_frames, net, fp16, cvit_weight
 
 def gen_parser():
     parser = argparse.ArgumentParser("CViT prediction")

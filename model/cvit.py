@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from einops import rearrange
+import torch.nn.functional as F
 
 class Residual(nn.Module):
     def __init__(self, fn):
@@ -166,56 +167,36 @@ class CViT(nn.Module):
             nn.Linear(mlp_dim, num_classes)
         )
 
-        # self.positional_encoding = nn.Parameter(torch.randn(1, self.max_sequence_length, dim))
-        # self.patch_to_embedding = nn.Linear(patch_dim, dim)
-        # self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
-
-        # # Transformer encoder
-        # self.transformer = Transformer(dim, depth, heads, mlp_dim)
-
-        # # Classification head
-        # # self.mlp_head = nn.Sequential(
-        # #     nn.LayerNorm(dim),
-        # #     nn.Linear(dim, num_classes)
-        # # )
-        # self.mlp_head = nn.Sequential(
-        #     nn.Linear(dim, 2048),  # Adjust this to match the checkpoint
-        #     nn.ReLU(),
-        #     nn.Linear(2048, num_classes)  # Match this layer to the checkpoint
-        # )
-
     def forward(self, img, mask=None):
         p = self.patch_size
+
+        # Process input through the feature extractor
         x = self.features(img)
-        y = rearrange(x, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
+
+        # Get current height and width
+        _, _, h, w = x.shape
+
+        # Calculate padding to make dimensions divisible by the patch size
+        pad_h = (p - h % p) % p
+        pad_w = (p - w % p) % p
+
+        # Apply padding
+        x = F.pad(x, (0, pad_w, 0, pad_h), mode="constant", value=0)
+
+        # Debugging: Log padded dimensions
+        # print(f"[DEBUG] Padded tensor shape: {x.shape}")
+
+        # Perform the rearrange operation
+        y = rearrange(x, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=p, p2=p)
 
         y = self.patch_to_embedding(y)
         cls_tokens = self.cls_token.expand(y.shape[0], -1, -1)
         x = torch.cat((cls_tokens, y), dim=1)
 
-        x += self.pos_embedding[:, :x.size(1)]  
+        x += self.pos_embedding[:, :x.size(1)]
         x = self.transformer(x, mask)
         x = self.to_cls_token(x[:, 0])
 
         return self.mlp_head(x)
-    # def extract_features(self, img):
-    #     """
-    #     Extract intermediate features from the model.
 
-    #     Args:
-    #         img (torch.Tensor): Input tensor (e.g., [1, 3, 224, 224]).
-
-    #     Returns:
-    #         torch.Tensor: Feature vector (e.g., [1, dim]).
-    #     """
-    #     p = self.patch_size
-    #     x = self.features(img)
-    #     y = rearrange(x, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=p, p2=p)
-    #     y = self.patch_to_embedding(y)
-    #     cls_tokens = self.cls_token.expand(y.shape[0], -1, -1)
-    #     x = torch.cat((cls_tokens, y), dim=1)
-    #     x += self.pos_embedding[:, :x.size(1)]
-    #     x = self.transformer(x)
-    #     return x.mean(dim=1)  #
-    
     

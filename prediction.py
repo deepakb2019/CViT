@@ -1,347 +1,207 @@
-# import cv2
-# import os
-# import torch
-# from decord import VideoReader, cpu
-# from decord import VideoWriter
-
-# # Load your trained model (assuming it's already set up)
-# from model.pred_func import pred_vid, preprocess_frame
-
-# def detect_and_filter_frames(video_path, model, threshold=0.5):
-#     # Extract frames from video
-#     vr = VideoReader(video_path, ctx=cpu(0))
-#     frame_indices = range(len(vr))
-#     real_frames = []
-
-#     # Process each frame
-#     for idx in frame_indices:
-#         frame = vr[idx].asnumpy()
-#         preprocessed_frame = preprocess_frame([frame])  # Preprocess single frame
-
-#         with torch.no_grad():
-#             pred, score = pred_vid(preprocessed_frame, model)
-
-#         # Add frame to real_frames if it’s classified as "Real"
-#         if pred == 0 and score > threshold:  # Assuming 0 = REAL
-#             real_frames.append(frame)
-
-#     return real_frames
-
-# def save_filtered_video(frames, output_path, fps=30):
-#     height, width, _ = frames[0].shape
-
-#     # Initialize the VideoWriter
-#     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-#     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-#     # Write each frame to the video
-#     for frame in frames:
-#         out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-
-#     out.release()
-
-#     print(f"Filtered video saved at: {output_path}")
-
-# def process_video(input_video, output_video, model, fps=30):
-#     print("Detecting fake frames...")
-#     real_frames = detect_and_filter_frames(input_video, model)
-
-#     if not real_frames:
-#         print("No real frames detected. Exiting.")
-#         return
-
-#     print(f"Detected {len(real_frames)} real frames. Saving video...")
-#     save_filtered_video(real_frames, output_video, fps)
-
-# def play_video(video_path):
-#     cap = cv2.VideoCapture(video_path)
-
-#     while cap.isOpened():
-#         ret, frame = cap.read()
-#         if not ret:
-#             break
-
-#         cv2.imshow('Filtered Video', frame)
-
-#         # Press 'q' to exit
-#         if cv2.waitKey(25) & 0xFF == ord('q'):
-#             break
-
-#     cap.release()
-#     cv2.destroyAllWindows()
-import cv2
+import base64
 import os
-from decord import VideoReader, cpu
-import torch
-from model.pred_func import pred_vid, preprocess_frame, real_or_fake,load_data
-from model.cvit import CViT
+import cv2
+from model.full_frame_emmbedings import FrameEmbeddingGenerator
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+from qdrant_client import QdrantClient
+from model.pred_func import extract_frames, preprocess_frame, pred_vid, real_or_fake
+from PIL import Image
+from torchvision import transforms
 from model.pred_func import *
+from skimage.exposure import match_histograms
+from facenet_pytorch import MTCNN
+import argparse
+from time import perf_counter
+from datetime import datetime
 
 
+COLLECTION_NAME = "original_video_frames_2048"
+VECTOR_SIZE = 2048
+qdrant_client = QdrantClient("http://localhost:6333")
 
-# def detect_and_filter_frames(video_path, model, threshold=0.5):
-#     # Extract frames from video
-#     vr = VideoReader(video_path, ctx=cpu(0))
-#     frame_indices = range(len(vr))
-#     real_frames = []
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 
-#     for idx in frame_indices:
-#         frame = vr[idx].asnumpy()
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
-#         # Assume `preprocess_frame` and `pred_vid` are already defined
-#         preprocessed_frame = preprocess_frame([frame])
-#         with torch.no_grad():
-#             pred, score = pred_vid(preprocessed_frame, model)
+mtcnn = MTCNN(select_largest=False, keep_all=True, post_process=False, device=device)
 
-#         if pred == 0 and score > threshold:  # 0 = REAL
-#             real_frames.append(frame)
-
-#     return real_frames
-
-# def detect_and_filter_frames(video_path, model):
-#     """
-#     Detects and filters fake frames from the video using the provided model.
-
-#     Args:
-#         video_path (str): Path to the video file.
-#         model (torch.nn.Module): Trained model for fake frame detection.
-
-#     Returns:
-#         list: List of real frames from the video.
-#     """
-#     print("[DEBUG] Starting fake frame detection...")
-#     real_frames = []
-#     # vr = VideoReader(video_path, ctx=cpu(0))
-#     df = df_face(video_path, num_frames=15) 
-#     print(f"[DEBUG] Total frames in video: {len(df)}")
-#     # print(f"[DEBUG] Total frames in video: {df}")
-#     # # frames = vr[:2].asnumpy() 
-#     # for i, frame in enumerate(df):
-#     #     print(f"[DEBUG] Processing frame {i+1}/{len(vr)} with shape: {frame.shape}")
-        
-#     #     try:
-#     #         # Preprocess the frame
-#     #         preprocessed_frame = preprocess_frame(frame)
-#     #         print(f"[DEBUG] Preprocessed frame shape: {preprocessed_frame.shape}")
-
-#     #         # Make a prediction
-#     #         pred, score = pred_vid(preprocessed_frame, model)
-#     #         print(f"[DEBUG] Prediction: {pred}, Score: {score}")
-
-#     #         # Append to real_frames if it's real
-#     #         if real_or_fake(pred) == "REAL":
-#     #             real_frames.append(frame.asnumpy())  # Save the original frame in NumPy format
-
-#     #     except Exception as e:
-#     #         print(f"[ERROR] Failed to process frame {i+1}: {e}")
-
-#     # print("[DEBUG] Completed fake frame detection.")
-#     return []
-def detect_and_filter_frames(video_path, model):
-    """
-    Detects and filters fake frames from the video using the provided model.
-
-    Args:
-        video_path (str): Path to the video file.
-        model (torch.nn.Module): Trained model for fake frame detection.
-
-    Returns:
-        list: List of real frames from the video.
-    """
-    print("[DEBUG] Starting fake frame detection...")
-
-    try:
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video file: {video_path}")
-        
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        
-        print(f"[DEBUG] Total frames in video: {total_frames}")
-        # Extract and preprocess frames
-        df = df_face(video_path, num_frames=total_frames)  # Existing frame extraction function
-        print(f"[DEBUG] Number of frames preprocessed: {df.shape[0]}")
-
-        real_frames = []
-
-        for i in range(len(df)):
-            print(f"[DEBUG] Processing frame {i+1}/{len(df)}")
-            frame_tensor = df[i].unsqueeze(0)  # Add batch dimension
-            print(f"[DEBUG] Frame tensor shape for prediction: {frame_tensor.shape}")
-
-            # Make a prediction
-            pred, score = pred_vid(frame_tensor, model)
-            print(f"[DEBUG] Prediction: {real_or_fake(pred)}, Score: {score}")
-
-            # Save only real frames
-            if real_or_fake(pred) == "REAL":
-                real_frames.append(df[i].permute(1, 2, 0).cpu().numpy())  # Convert back to NumPy for saving/display
-
-    except Exception as e:
-        print(f"[ERROR] Failed to process video: {e}")
-        return []
-
-    print("[DEBUG] Completed fake frame detection.")
-    return real_frames
+def search_original_frame(embedding):
+    """Search for the closest matching embedding in Qdrant."""
+    search_result = qdrant_client.search(
+        collection_name=COLLECTION_NAME,
+        query_vector=embedding.tolist(),
+        limit=1
+    )
+    if search_result:
+        payload = search_result[0].payload
+        distance = search_result[0].score
+        return payload, distance
+    return None, None
 
 
-# def save_filtered_video(frames, output_path, fps=30):
-#     if not frames:
-#         print("No frames to save!")
-#         return
-
-#     # Get dimensions of the first frame
-#     height, width, _ = frames[0].shape
-
-#     # Initialize OpenCV VideoWriter
-#     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
-#     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-#     for frame in frames:
-#         out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
-
-#     out.release()
-#     print(f"Filtered video saved to: {output_path}")
-# def save_filtered_video(frames, output_path, fps=30):
-#     """
-#     Saves the filtered frames as a video.
+def process_frame(frame, frame_idx, model, threshold=0.8):
+    """Process a single frame: detect, classify, and replace if deepfaked."""
+    # print(f"[INFO] Processing frame {frame_idx + 1}...")
+    embeddings = FrameEmbeddingGenerator()
+    df = df_face_by_frame(frame, num_frames=1)
     
-#     Args:
-#         frames (list): List of frames to save.
-#         output_path (str): Path to save the output video.
-#         fps (int): Frames per second for the output video.
-#     """
-#     if not frames:
-#         print("No frames to save!")
-#         return
+    if len(df) >= 1:
+        prediction, confidence = pred_vid(df, model)
+        label = real_or_fake(prediction)
+    else:
+        # print("[WARN] No faces detected in the frame. Defaulting to REAL.")
+        prediction, confidence = 0, 0.5 
+        label = "REAL"
 
-#     # Ensure the output directory exists
-#     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # print("label",label)
 
-#     # Get dimensions of the first frame
-#     height, width, _ = frames[0].shape
+    if label == "REAL":
+        # print(f"[INFO] Frame {frame_idx + 1}: REAL.")
+        return frame
 
-#     # Initialize OpenCV VideoWriter
-#     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
-#     print(f"[DEBUG] Creating VideoWriter with path: {output_path}, FPS: {fps}, Size: ({width}, {height})")
-    
-#     try:
-#         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-#         if not out.isOpened():
-#             raise IOError("Failed to open VideoWriter. Check codec support or file path.")
+    print(f"[INFO] Frame {frame_idx + 1}: FAKE with confidence {confidence}. Searching for original frame...")
+    embedding = embeddings.generate_embedding(frame)
+    original_frame_info, distance  = search_original_frame(embedding)
+    # print(f"\n\n\n[DEBUG] Retrieved Distance: {distance}")
 
-#         for frame in frames:
-#             out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))  # Convert RGB to BGR for OpenCV
+    if original_frame_info:
+        original_frame_data = original_frame_info.get("frame_data")
+        if original_frame_data:
+            original_frame = cv2.imdecode(
+                np.frombuffer(base64.b64decode(original_frame_data), np.uint8),
+                cv2.IMREAD_COLOR
+            )
+            original_frame_rgb = cv2.cvtColor(original_frame, cv2.COLOR_BGR2RGB)
+            updated_frame = replace_face_in_frame(frame, original_frame_rgb)
+            return updated_frame
+        else:
+            print(f"[WARN] Original frame data missing for frame {frame_idx + 1}.")
+    else:
+        print(f"[WARN] No matching original frame found for frame {frame_idx + 1}.")
 
-#         out.release()
-#         print(f"Filtered video saved to: {output_path}")
-#     except Exception as e:
-#         print(f"[ERROR] Failed to save video: {e}")
-def save_filtered_video(frames, output_path, fps=30):
+    return frame
+
+
+def replace_face_in_frame(deepfake_frame, original_frame):
+    """Replace the deepfaked face with the original face."""
+    df_boxes, _ = mtcnn.detect(deepfake_frame)
+    orig_boxes, _ = mtcnn.detect(original_frame)
+
+    if df_boxes is not None and orig_boxes is not None:
+        df_box = df_boxes[0]
+        orig_box = orig_boxes[0]
+
+        df_face = deepfake_frame[int(df_box[1]):int(df_box[3]), int(df_box[0]):int(df_box[2])]
+        orig_face = original_frame[int(orig_box[1]):int(orig_box[3]), int(orig_box[0]):int(orig_box[2])]
+
+        orig_face_resized = cv2.resize(orig_face, (df_face.shape[1], df_face.shape[0]))
+
+        deepfake_frame[int(df_box[1]):int(df_box[3]), int(df_box[0]):int(df_box[2])] = orig_face_resized
+
+    return deepfake_frame
+
+
+def save_video(frames, output_path, fps=30):
     """
-    Saves the filtered frames as a video.
+    Save frames as a video.
     
     Args:
-        frames (list): List of frames to save.
+        frames (list of np.ndarray): List of processed frames.
         output_path (str): Path to save the output video.
         fps (int): Frames per second for the output video.
     """
     if not frames:
-        print("[ERROR] No frames to save!")
+        print("[WARN] No frames to save!")
         return
+    
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        print(f"[INFO] Creating output directory: {output_dir}")
+        os.makedirs(output_dir, exist_ok=True)
 
-    # Ensure the output directory exists
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    height, width, _ = frames[0].shape
 
-    # Get dimensions of the first frame
-    height, width, channels = frames[0].shape
-    assert channels == 3, "[ERROR] Frames must have 3 color channels (RGB)."
-
-    # Initialize OpenCV VideoWriter
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    for i, frame in enumerate(frames):
-        try:
-            # Convert frame to BGR format for OpenCV
-            if frame.dtype != np.uint8:
-                frame = np.clip(frame * 255, 0, 255).astype(np.uint8)  # Rescale if normalized
-            bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            out.write(bgr_frame)
-        except Exception as e:
-            print(f"[ERROR] Failed to write frame {i + 1}: {e}")
+    for frame in frames:
+        out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
 
     out.release()
-    print(f"[INFO] Filtered video saved to: {output_path}")
-
-def process_video(input_video, output_video, model, fps=30):
-    print("Detecting fake frames...")
-    real_frames = detect_and_filter_frames(input_video, model)
-
-    print(f"Detected {len(real_frames)} real frames. Saving video...")
-    save_filtered_video(real_frames, output_video, fps)
+    # print(f"[INFO] Video saved to: {output_path}")
 
 
-input_video = "data/combined_video.mp4"
-output_video = "data/filtered_video.mp4"
+def process_video(video_path, output_path, model):
+    """Process a video to detect and replace deepfaked frames."""
+    frames = extract_frames(video_path, frames_nums=200)
+    updated_frames = []
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = []
+        for frame_idx, frame in enumerate(frames):
+            futures.append(executor.submit(process_frame, frame, frame_idx, model))
+
+        for future in tqdm(futures, desc="Processing Frames"):
+            updated_frames.append(future.result())
+
+    save_video(updated_frames, output_path, fps=30)
+    # print(f"[INFO] Updated video saved to {output_path}")
 
 
-model = load_cvit('cvit_deepfake_detection_ep_50.pth', 30)
+def gen_parser():
+    """Generate a command-line parser for user input."""
+    parser = argparse.ArgumentParser(description="Deepfake detection and face replacement.")
+    parser.add_argument(
+        "--i",
+        type=str,
+        required=True,
+        help="Path to the input video file to be processed."
+    )
+    parser.add_argument(
+        "--o",
+        type=str,
+        required=True,
+        help="Path to save the processed video with replaced faces."
+    )
+    parser.add_argument(
+        "--w",
+        type=str,
+        default="cvit_deepfake_detection_ep_50.pth",
+        help="Path to the pre-trained CViT model weights."
+    )
+    return parser.parse_args()
 
+def main():
+    start_time = perf_counter()
 
-# # Load your trained model
-# model = torch.load("weight/cvit_deepfake_detection_ep_50.pth", map_location=torch.device("cpu"))
-# model.eval()
+    # Parse arguments
+    args = gen_parser()
 
-# Process the video
-process_video(input_video, output_video, model, fps=30)
+    # Load the model
+    print("[INFO] Loading model...")
+    model = load_cvit(args.w, fp16=False)
 
-def combine_videos(real_video_path, fake_video_path, output_path):
-    # Open the real video
-    real_cap = cv2.VideoCapture(real_video_path)
-    fake_cap = cv2.VideoCapture(fake_video_path)
+    # Process the video
+    print(f"[INFO] Processing video: {args.i}")
+    process_video(args.i, args.o, model)
 
-    # Get properties of the real video
-    width = int(real_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(real_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(real_cap.get(cv2.CAP_PROP_FPS))
+    # Save the output video
+    print(f"[INFO] Processed video saved to: {args.o}")
 
-    # Initialize the video writer with the properties of the first video
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    end_time = perf_counter()
+    print(f"\n\n--- Total Execution Time: {end_time - start_time:.2f} seconds ---")
 
-    # Function to process and write frames from a video
-    def process_and_write_frames(cap, source_name):
-        while True:
-            ret, frame = cap.read()
-            if not ret:  # End of video
-                break
+if __name__ == "__main__":
+    # video_path = "data/fake/id1_id6_0009.mp4"
+    # output_path = "data/updated_video_1.mp4"
 
-            # Resize frame if dimensions don't match
-            frame_height, frame_width, _ = frame.shape
-            if frame_width != width or frame_height != height:
-                print(f"[INFO] Resizing frames from {source_name} to match the first video.")
-                frame = cv2.resize(frame, (width, height))
+    # model = load_cvit("cvit_deepfake_detection_ep_50.pth", fp16=False)
 
-            out.write(frame)
-
-    # Add frames from the real video
-    print("Adding frames from the real video...")
-    process_and_write_frames(real_cap, "real video")
-
-    # Add frames from the fake video
-    print("Adding frames from the fake video...")
-    process_and_write_frames(fake_cap, "fake video")
-
-    # Release resources
-    real_cap.release()
-    fake_cap.release()
-    out.release()
-
-    print(f"Combined video saved to: {output_path}")
-
-
-# Example Usage
-# combine_videos("sample__prediction_data/sample_1.mp4", "sample__prediction_data/aajsqyyjni.mp4", "data/combined_video.mp4")
+    # process_video(video_path, output_path, model)
+     main()

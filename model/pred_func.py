@@ -26,24 +26,6 @@ facedet.load_weights("helpers/blazeface.pth")
 facedet.load_anchors("helpers/anchors.npy")
 _ = facedet.train(False)
 
-# def load_cvit(cvit_weight, fp16):
-#     model = CViT(image_size=224, patch_size=7, num_classes=2, channels=512,
-#              dim=1024, depth=6, heads=8, mlp_dim=2048)
-
-#     model.to(device)
-#     checkpoint = torch.load(os.path.join("weight", cvit_weight), map_location=torch.device('cpu'))
-    
-#     if 'state_dict' in checkpoint:
-#         model.load_state_dict(checkpoint['state_dict'])
-#     else:
-#         model.load_state_dict(checkpoint)
-
-#     _ = model.eval()
-
-#     if fp16:
-#         model.half()
-
-#     return model
 
 def load_cvit(cvit_weight, fp16):
     # Initialize the CViT model
@@ -160,6 +142,51 @@ def face_blaze(video_path):
 
     return ([], 0) if count_blaze == 0 else (temp_blaze[:count_blaze], count_blaze)
 
+def extract_faces(frames, model="dlib", padding=10):
+    """
+    Detect and extract faces from a list of frames.
+
+    Args:
+        frames (list of np.ndarray): List of video frames in RGB format.
+        model (str): Face detection model to use ("dlib", "mtcnn", or "blazeface").
+        padding (int): Additional padding around detected faces.
+
+    Returns:
+        list: List of extracted faces (as np.ndarray) and their bounding boxes.
+    """
+    extracted_faces = []
+    bounding_boxes = []
+
+    for idx, frame in tqdm(enumerate(frames), total=len(frames), desc="Extracting Faces"):
+        try:
+            if model == "dlib":
+                face_locations = face_recognition.face_locations(frame, number_of_times_to_upsample=0, model="cnn")
+            elif model == "mtcnn":
+                face_locations, _ = mtcnn.detect(frame)
+                if face_locations is not None:
+                    face_locations = [list(map(int, box)) for box in face_locations]
+                else:
+                    face_locations = []
+            else:
+                raise ValueError(f"Unsupported face detection model: {model}")
+
+            for face_location in face_locations:
+                top, right, bottom, left = face_location
+                top = max(0, top - padding)
+                bottom = min(frame.shape[0], bottom + padding)
+                left = max(0, left - padding)
+                right = min(frame.shape[1], right + padding)
+
+                face_image = frame[top:bottom, left:right]
+                face_image = cv2.resize(face_image, (224, 224), interpolation=cv2.INTER_AREA)
+                extracted_faces.append(face_image)
+                bounding_boxes.append(face_location)
+
+        except Exception as e:
+            print(f"[WARN] Failed to process frame {idx}: {e}")
+
+    return extracted_faces, bounding_boxes
+
 def face_rec(frames, p=None, klass=None):
     temp_face = np.zeros((len(frames), 224, 224, 3), dtype=np.uint8)
     count = 0
@@ -189,11 +216,6 @@ def face_rec(frames, p=None, klass=None):
 
                     face_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
 
-                    #if face_mtcnn_(face_image):
-                    #    print('FILTEINRG IMAGE WITH MTCNN')
-                    #    temp_face[count] = face_image
-                    #    count += 1
-
                     temp_face[count] = face_image
                     count += 1
                 else:
@@ -203,16 +225,6 @@ def face_rec(frames, p=None, klass=None):
 
     return ([], 0) if count == 0 else (temp_face[:count], count)
 
-
-# def preprocess_frame(frame):
-#     df_tensor = torch.tensor(frame, device=device).float()
-#     df_tensor = df_tensor.permute((0, 3, 1, 2))
-
-#     for i in range(len(df_tensor)):
-#         df_tensor[i] = normalize_data()["vid"](df_tensor[i] / 255.0)
-
-#     return df_tensor
-
 # latest
 def preprocess_frame(frame):
     df_tensor = torch.tensor(frame, device=device).float()  # Ensure input is in float32
@@ -221,86 +233,12 @@ def preprocess_frame(frame):
     for i in range(len(df_tensor)):
         df_tensor[i] = normalize_data()["vid"](df_tensor[i] / 255.0)  # Normalize frame data
 
-    # Debugging: Print the data type of the preprocessed tensor
-    print(f"[DEBUG] Preprocessed frame tensor dtype: {df_tensor.dtype}")
-
     return df_tensor
-
-# def preprocess_frame(frame, patch_size=7):
-#     import torch.nn.functional as F
-
-#     # Check if the input frame is 3D (H, W, C) and convert to 4D (1, H, W, C)
-#     if len(frame.shape) == 3:  # Single frame
-#         frame = frame[np.newaxis, ...]
-
-#     # Convert frame to tensor
-#     frame_tensor = torch.tensor(frame, device=device).float()  # Ensure input is in float32
-
-#     # Rearrange dimensions to (N, C, H, W)
-#     frame_tensor = frame_tensor.permute((0, 3, 1, 2))  # (Batch, Channels, Height, Width)
-
-#     # Pad dimensions to make them divisible by patch_size
-#     _, _, h, w = frame_tensor.shape
-#     new_h = ((h + patch_size - 1) // patch_size) * patch_size  # Round up to nearest multiple of patch_size
-#     new_w = ((w + patch_size - 1) // patch_size) * patch_size
-#     pad_h = new_h - h
-#     pad_w = new_w - w
-
-#     # Calculate padding for each side
-#     pad_top = pad_h // 2
-#     pad_bottom = pad_h - pad_top
-#     pad_left = pad_w // 2
-#     pad_right = pad_w - pad_left
-
-#     # Apply symmetric padding
-#     frame_tensor = F.pad(frame_tensor, (pad_left, pad_right, pad_top, pad_bottom), mode="constant", value=0)
-
-#     # Debugging: Log shapes after padding
-#     print(f"[DEBUG] Frame shape after padding/cropping: {frame_tensor.shape}")
-
-#     # Normalize the tensor
-#     for i in range(len(frame_tensor)):
-#         frame_tensor[i] = normalize_data()["vid"](frame_tensor[i] / 255.0)
-
-#     return frame_tensor
-
-
-
-
-
-
 
 def pred_vid(df, model):
     with torch.no_grad():
         return max_prediction_value(torch.sigmoid(model(df).squeeze()))
-# def pred_vid(df, model):
-#     # Debugging: Log the input tensor data type
-#     print(f"[DEBUG] Input tensor dtype before passing to model: {df.dtype}")
 
-#     with torch.no_grad():
-#         output = model(df)
-#         print(f"[DEBUG] Model output dtype: {output.dtype}")  # Log output dtype
-#         return max_prediction_value(torch.sigmoid(output.squeeze()))
-
-# def extract_features(df, model):
-#     """
-#     Extract embeddings (intermediate features) from the model.
-
-#     Args:
-#         df (torch.Tensor): Preprocessed input tensor (e.g., [1, 3, 224, 224]).
-#         model (torch.nn.Module): Trained CViT model.
-
-#     Returns:
-#         torch.Tensor: Embedding vector (e.g., [1, 512]).
-#     """
-#     # Debugging: Log the input tensor data type
-#     print(f"[DEBUG] Input tensor dtype before passing to model: {df.dtype}")
-
-#     with torch.no_grad():
-#         # Get intermediate features instead of final classification
-#         features = model.extract_features(df)  # You need to implement `extract_features` in the CViT class
-#         print(f"[DEBUG] Feature vector shape: {features.shape}")  # Log feature shape
-#         return features.squeeze()  # Remove batch dimension (e.g., [1, 512] -> [512])
 
 def max_prediction_value(y_pred):
     # Finds the index and value of the maximum prediction value.
@@ -318,7 +256,6 @@ def max_prediction_value(y_pred):
 
 
 def real_or_fake(prediction):
-    print("prediction",prediction)
     return {0: "REAL", 1: "FAKE"}[prediction ^ 1]
 
 
@@ -337,35 +274,33 @@ def df_face(vid, num_frames):
     #face, count = face_blaze(vid)
     return preprocess_frame(face) if count > 0 else []
 
+def df_face_by_frame(frame, num_frames=1):
+    """
+    Extract faces from a single frame (or batch of frames).
+
+    Args:
+        frame (np.ndarray): Single frame in RGB format.
+        num_frames (int): Ignored but kept for compatibility.
+
+    Returns:
+        torch.Tensor: Preprocessed face tensor.
+    """
+    # Ensure input is a batch of frames
+    frames = [frame] if len(frame.shape) == 3 else frame
+
+    # Extract faces using face_rec
+    face, count = face_rec(frames)
+
+    if count > 0:
+        return preprocess_frame(face)
+    else:
+        return []
+    
 
 def is_video(vid):
     return os.path.isfile(vid) and vid.endswith(
         tuple([".avi", ".mp4", ".mpg", ".mpeg", ".mov"])
     )
-
-# def is_video(file_name, folder_path=""):
-#     """
-#     Checks if a file is a valid video file based on its extension and existence.
-
-#     Args:
-#         file_name (str): The name of the file.
-#         folder_path (str): The folder path where the file is located.
-
-#     Returns:
-#         bool: True if the file is a video and exists, False otherwise.
-#     """
-#     # Combine folder path with file name to get the full path
-#     full_path = os.path.join(folder_path, file_name)
-
-#     # List of supported video extensions (case-insensitive)
-#     video_extensions = [".avi", ".mp4", ".mpg", ".mpeg", ".mov", ".mkv"]
-
-#     # Debugging: Print the full path being checked
-#     print(f"[DEBUG] Checking video file: {full_path}")
-
-#     # Ensure case-insensitive matching and check if the file exists
-#     return os.path.isfile(full_path) and full_path.lower().endswith(tuple(video_extensions))
-
 
 def set_result():
     return {
