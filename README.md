@@ -1,149 +1,89 @@
-# CViT
-### Deepfake Video Detection Using Convolutional Vision Transformer
+# DeepfakeRestorer
 
-Implementation code for our paper. 
-[link to paper](https://arxiv.org/abs/2102.11126) | [link to MS Thesis](http://etd.aau.edu.et/handle/123456789/24209) | [link to MS Thesis defense PPT file](https://github.com/erprogs/CViT/blob/main/CViT.pptx)      | [link to CViT2](comingsoon)
+DeepfakeRestorer is an advanced AI-driven project aimed at identifying and reversing deepfake modifications in video frames. It uses embeddings and a vector database to restore the original face in deepfaked frames, effectively performing a reverse deepfake mechanism.
 
+---
 
-## Update, April 1, 2024
+## Key Features
+- **Deepfake Detection**: Identifies deepfaked frames in input videos using AI-based models.
+- **Frame Restoration**: Replaces detected deepfaked faces with the original faces using embeddings stored in a vector database.
+- **Vector Database Integration**: Uses Qdrant for efficient embedding storage and retrieval.
+- **Parallel Processing**: Processes video frames in parallel to improve performance and speed.
+- **Dynamic Video Handling**: Supports random sampling of frames for quick fake detection and detailed processing.
 
-# CViT2
-### Improved Deepfake Video Detection Using Convolutional Vision Transformer
+---
 
+## Technologies Used
+- **Deep Learning Framework**: PyTorch
+- **Face Detection**: MTCNN
+- **Vector Database**: Qdrant
+- **Pre-trained Models**: ResNet, CViT
+- **Video Processing**: OpenCV and Decord
 
-### Requirements:
-* Pytorch >=1.4
+---
 
-### DL library used for face extraction
-   * helpers_read_video_1.py
-   * helpers_face_extract_1.py
-   * blazeface.py
-   * blazeface.pth
-   * face_recognition
-   * facenet-pytorch
-   * dlib
+## How It Works
+1. **Frame Sampling**: Extracts a few frames from the video to determine if it is deepfaked.
+2. **Deepfake Classification**: Uses AI models to classify frames as real or fake.
+3. **Original Frame Retrieval**: If fake frames are detected, retrieves the original corresponding frames from the vector database.
+4. **Face Replacement**: Replaces the deepfaked faces with the original faces.
+5. **Video Reconstruction**: Saves the processed frames as an updated video.
 
-### Preprocessing
+---
 
-extractfaces.py
-    Face extraction from video.
-    The code works for DFDC dataset. You can test it using the sample data provided.
+## Installation
 
-### Weights
-cvit_deepfake_detection_ep_50.pth - Model weight for CViT. <br />
-cvit2_deepfake_detection_ep_50.pth - Model weight for CViT2. <br />
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/deepakb2019/DeepfakeReversal.git
+   cd DeepfakeRestorer
+2. Install dependencies:
+    using requirements.txt
+    ```bash
+    pip install -r requirements.txt
+3. Start Qdrant locally or connect to a remote instance:
+    ```bash
+    docker run -p 6333:6333 -d qdrant/qdrant
+## Usage
 
-### Predict CViT 
-Download the pretrained model from [Huggingface](https://huggingface.co/datasets/Deressa/cvit) and save it in the `weight` folder.
+### 1. Store Original Frames in Vector Database
+   To store embeddings of original video frames:
+```bash
+python store_embeddings.py
+```
+### 2. Process a Video
+To detect and restore deepfaked frames:
+```bash
+python process_video.py --i data/fake/id1_id6_0009.mp4 --o data/updated_video.mp4
+```
+### `store_embeddings.py`
 
-##### CViT2 - trained on 5 datasets including DFDC
+To store embeddings of original video frames, use the following command:
 
 ```bash
-wget https://huggingface.co/datasets/Deressa/cvit/blob/main/cvit2_deepfake_detection_ep_50.pth
+python store_embeddings.py --video-folder <path_to_videos> --save-frames-folder <path_to_save_frames> --batch-size <batch_size>
 ```
-or 
-
-##### CViT - trained on DFDC
-
-```bash
-wget https://huggingface.co/datasets/Deressa/cvit/blob/main/cvit_deepfake_detection_ep_50.pth
-```
-
-```python cvit_prediction.py --p <video path> --f <number_of_frames>  --w <weights_path> --n <network_type> --fp16 <half_precision>```
-
-### To predict on some deepfake datasets:
-
-```python cvit_prediction.py --p <video path> --f <number_of_frames> --d <dataset_type> --w <weights_path> --n <network_type> --fp16 <half_precision>```
-
-E.g usage:
-
-```python cvit_prediction.py --p sample__prediction_data --f 15 --n cvit2 --fp16 y ```
-
-predict DFDC:
-```python cvit_prediction.py --p dfdc_vidoes --d dfdc --f 15 --n cvit2 --fp16 y ```
+#### Options:
+- `--i` (str): Path to the folder containing original videos. Default: `data/original_videos`.
+- `--0` (str): Path to save extracted frames. Default: `data/processed_frames`.
 
 
+### New Updates
+
+#### Added Features
+- **Dynamic Frame Sampling**: Randomly sample frames to determine if a video is fake, saving time.
+- **Face Restoration**: Replace deepfaked faces with original faces across all video frames.
+- **Parallel Frame Processing**: Speed up video processing with multithreading.
+
+#### Optimizations
+- **Distance-Based Matching**: Improved efficiency for embedding retrieval.
+- **Enhanced Face Replacement Blending**: Smoother integration of original faces into deepfaked frames.
+- **Streamlined Command-Line Options**: Simplified usage and better user experience.
+### Contributing
+Feel free to fork this repository, make improvements, and submit pull requests. Contributions are always welcome!
+
+### License
+This project is licensed under the MIT License.
 
 
-#### Arguments
-
-Predicts whether a video is Deepfake or not.<br />
-Prediction value <0.5 - REAL <br />
-Prediction value >=5  - FAKE
-
-&nbsp;&nbsp;&nbsp;&nbsp; --p (str): Path to the video or image file for prediction.
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --p /path/to/video.mp4
-
-&nbsp;&nbsp;&nbsp;&nbsp; --f (int): Number of frames to process for prediction.
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --f 30
-
-&nbsp;&nbsp;&nbsp;&nbsp; --d (str): Dataset type. Options are dfdc, faceforensics, timit, or celeb.
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --d dfdc
-
-&nbsp;&nbsp;&nbsp;&nbsp; --w (str): Path to the model weights for CViT or CViT2.
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --w cvit2_deepfake_detection_ep_50
-
-&nbsp;&nbsp;&nbsp;&nbsp; --n (str): Network type. Options are cvit or cvit2.
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --n cvit
-
-&nbsp;&nbsp;&nbsp;&nbsp; --fp16 (str): Enable half-precision support. Accepts a boolean value (true or false).
-
-&nbsp;&nbsp;&nbsp;&nbsp;    Example: --fp16 true
-
-
-### Train CViT
-To train the model on your own you can use the following parameters:<br />
-
-``` python train_cvit.py -e <epochs> --d <data_path> --b <batch_size> --l <learning_rate> --w <weight_decay> --t <test_option>```
-
-### Options
-
-&nbsp;&nbsp;&nbsp;&nbsp; -e, --epoch (int): Number of training epochs, defualt=1.
-
-&nbsp;&nbsp;&nbsp;&nbsp; -d, --dir (str): Path to the training data.
-
-&nbsp;&nbsp;&nbsp;&nbsp; -b, --batch (int): Batch size, defualt=32.
-
-&nbsp;&nbsp;&nbsp;&nbsp; -l, --rate (float): Learning rate, default=0.001.
-
-&nbsp;&nbsp;&nbsp;&nbsp; -w, --wdecay (float): Weight decay, default= 0.0000001.
-
-&nbsp;&nbsp;&nbsp;&nbsp; -t, --test (str): Test on test set (e.g., y).
-
-
-### Authors
-**Deressa Wodajo** <br />
-**Solomon Atnafu** <br />
-**Peter Lambert** <br />
-**Glenn Van Wallendael** <br />
-**Hannes Mareen** <br />
-
-## Bibtex
-#### CViT
-```bash
-@misc{wodajo2021deepfake,
-      title={Deepfake Video Detection Using Convolutional Vision Transformer}, 
-      author={Deressa Wodajo and Solomon Atnafu},
-      year={2021},
-      eprint={2102.11126},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
-}
-```
-#### CViT2
-```bash
-@inproceedings{wodajo2024deepfake,
-    title={Improved Deepfake Video Detection Using Convolutional Vision Transformer},
-    author={Deressa Wodajo, Peter Lambert, Glenn Van Wallendael, Solomon Atnafu and Hannes Mareen},
-    booktitle={Proceedings of the IEEE International Conference on Games, Entertainment & Media (GEM)},
-    year={2024},
-    month={June},
-    address={Turin (Torino), Italy}
-}
-```
 
